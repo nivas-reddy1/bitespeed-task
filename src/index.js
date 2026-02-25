@@ -20,7 +20,7 @@ app.post('/identify', async (req, res) => {
     const response = await identifyContact(email, phoneNumber);
     return res.status(200).json(response);
   } catch (err) {
-    console.error('Error in enpoint nigga:', err);
+    console.error('Error in enpoint:', err);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 });

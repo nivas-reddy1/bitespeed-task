@@ -76,7 +76,7 @@ function buildResponse(allContacts) {
 
   return {
     contact: {
-      primaryContactId: primary.id,
+      primaryContactId: primary.id, 
       emails,
       phoneNumbers,
       secondaryContactIds: secondaries.map(c => c.id),
@@ -95,6 +95,42 @@ async function identifyContact(email, phoneNumber) {
   const primaryIds = getPrimaryIds(matched);
   let allContacts = await fetchCluster(primaryIds);
 
+  let primaries = allContacts.filter(c => c.linkPrecedence === 'primary');
+
+  if (primaries.length > 1) {
+    primaries.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const truePrimary = primaries[0];
+    const toMerge = primaries.slice(1); 
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      for (const p of toMerge) {
+        await client.query(
+          `UPDATE contacts 
+           SET "linkedId" = $1, "updatedAt" = NOW() 
+           WHERE "linkedId" = $2 AND "deletedAt" IS NULL`,
+          [truePrimary.id, p.id]
+        );
+        await client.query(
+          `UPDATE contacts 
+           SET "linkPrecedence" = 'secondary', "linkedId" = $1, "updatedAt" = NOW() 
+           WHERE id = $2`,
+          [truePrimary.id, p.id]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e; 
+    } finally {
+      client.release();
+    }
+
+    allContacts = await fetchCluster([truePrimary.id]);
+  }
   const truePrimary = allContacts.find(c => c.linkPrecedence === 'primary');
   
   const emailIsNew = email && !allContacts.some(c => c.email === email);
@@ -102,7 +138,6 @@ async function identifyContact(email, phoneNumber) {
 
   if (emailIsNew || phoneIsNew) {
     await createContact(email, phoneNumber, truePrimary.id, 'secondary');
-
     allContacts = await fetchCluster([truePrimary.id]);
   }
 
